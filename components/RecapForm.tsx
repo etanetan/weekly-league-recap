@@ -2,11 +2,18 @@
 
 import { useState } from "react";
 
+export type SavedLeague = {
+  sleeperLeagueId: string;
+  leagueName: string | null;
+  season: string | null;
+};
+
 type Props = {
   defaultLeagueId?: string;
   lockLeagueId?: boolean;
   defaultSeason?: string;
   defaultWeek?: number;
+  savedLeagues?: SavedLeague[];
   onResult?: (result: RecapResponse) => void;
 };
 
@@ -29,14 +36,30 @@ export default function RecapForm({
   lockLeagueId = false,
   defaultSeason,
   defaultWeek = 1,
+  savedLeagues = [],
   onResult,
 }: Props) {
-  const [leagueId, setLeagueId] = useState(defaultLeagueId);
-  const [season, setSeason] = useState(defaultSeason ?? SEASONS[1] ?? SEASONS[0]);
+  const hasSaved = savedLeagues.length > 0 && !lockLeagueId;
+  const initialLeagueId = defaultLeagueId || (hasSaved ? savedLeagues[0].sleeperLeagueId : "");
+  const initialSeason =
+    defaultSeason ||
+    (hasSaved ? savedLeagues[0].season ?? SEASONS[1] ?? SEASONS[0] : SEASONS[1] ?? SEASONS[0]);
+
+  const [manualMode, setManualMode] = useState(false);
+  const [leagueId, setLeagueId] = useState(initialLeagueId);
+  const [season, setSeason] = useState(initialSeason);
   const [week, setWeek] = useState<number>(defaultWeek);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RecapResponse | null>(null);
+
+  const showDropdown = hasSaved && !manualMode;
+
+  function handleDropdownChange(newLeagueId: string) {
+    setLeagueId(newLeagueId);
+    const match = savedLeagues.find((l) => l.sleeperLeagueId === newLeagueId);
+    if (match?.season) setSeason(match.season);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,17 +90,48 @@ export default function RecapForm({
     <div className="w-full">
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">League ID</span>
-          <input
-            type="text"
-            inputMode="numeric"
-            value={leagueId}
-            onChange={(e) => setLeagueId(e.target.value)}
-            placeholder="e.g. 1312076332460425216"
-            disabled={lockLeagueId || submitting}
-            required
-            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none disabled:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:disabled:bg-zinc-800"
-          />
+          <div className="flex items-baseline justify-between">
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              {showDropdown ? "Your leagues" : "League ID"}
+            </span>
+            {hasSaved && (
+              <button
+                type="button"
+                onClick={() => setManualMode((m) => !m)}
+                className="text-xs text-emerald-700 hover:underline dark:text-emerald-400"
+              >
+                {manualMode ? "Use saved league" : "Enter a different ID"}
+              </button>
+            )}
+          </div>
+
+          {showDropdown ? (
+            <select
+              value={leagueId}
+              onChange={(e) => handleDropdownChange(e.target.value)}
+              disabled={submitting}
+              required
+              className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            >
+              {savedLeagues.map((l) => (
+                <option key={l.sleeperLeagueId} value={l.sleeperLeagueId}>
+                  {l.leagueName ?? l.sleeperLeagueId}
+                  {l.season ? ` (${l.season})` : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              inputMode="numeric"
+              value={leagueId}
+              onChange={(e) => setLeagueId(e.target.value)}
+              placeholder="e.g. 1312076332460425216"
+              disabled={lockLeagueId || submitting}
+              required
+              className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none disabled:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:disabled:bg-zinc-800"
+            />
+          )}
         </label>
 
         <div className="grid grid-cols-2 gap-4">
