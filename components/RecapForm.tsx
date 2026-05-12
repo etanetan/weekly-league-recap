@@ -2,6 +2,14 @@
 
 import { useState } from "react";
 
+export type Tone = "beat-reporter" | "broadcaster" | "hype";
+
+const TONE_OPTIONS: { value: Tone; label: string; description: string }[] = [
+  { value: "broadcaster", label: "Broadcaster", description: "Animated TV anchor energy" },
+  { value: "beat-reporter", label: "Beat reporter", description: "Schefter-style news flashes" },
+  { value: "hype", label: "Hype", description: "Sports Twitter, full volume" },
+];
+
 export type SavedLeague = {
   sleeperLeagueId: string;
   leagueName: string | null;
@@ -49,6 +57,9 @@ export default function RecapForm({
   const [leagueId, setLeagueId] = useState(initialLeagueId);
   const [season, setSeason] = useState(initialSeason);
   const [week, setWeek] = useState<number>(defaultWeek);
+  const [tone, setTone] = useState<Tone>("broadcaster");
+  const [useEmojis, setUseEmojis] = useState(true);
+  const [trashTalk, setTrashTalk] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RecapResponse | null>(null);
@@ -70,7 +81,7 @@ export default function RecapForm({
       const res = await fetch("/api/recap", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ leagueId: leagueId.trim(), season, week }),
+        body: JSON.stringify({ leagueId: leagueId.trim(), season, week, tone, useEmojis, trashTalk }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -161,6 +172,50 @@ export default function RecapForm({
                 <option key={w} value={w}>Week {w}</option>
               ))}
             </select>
+          </label>
+        </div>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Recap tone</span>
+          <select
+            value={tone}
+            onChange={(e) => setTone(e.target.value as Tone)}
+            disabled={submitting}
+            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+          >
+            {TONE_OPTIONS.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label} — {t.description}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={useEmojis}
+              onChange={(e) => setUseEmojis(e.target.checked)}
+              disabled={submitting}
+              className="h-4 w-4 accent-emerald-600"
+            />
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Include emojis
+            </span>
+          </label>
+
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={trashTalk}
+              onChange={(e) => setTrashTalk(e.target.checked)}
+              disabled={submitting}
+              className="h-4 w-4 accent-emerald-600"
+            />
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Trash talk the bad teams
+            </span>
           </label>
         </div>
 

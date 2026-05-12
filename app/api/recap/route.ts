@@ -11,6 +11,9 @@ const BodySchema = z.object({
   leagueId: z.string().min(5).max(64),
   season: z.string().regex(/^\d{4}$/),
   week: z.number().int().min(1).max(22),
+  tone: z.enum(["beat-reporter", "broadcaster", "hype"]).optional(),
+  useEmojis: z.boolean().optional(),
+  trashTalk: z.boolean().optional(),
 });
 
 export async function POST(req: NextRequest) {
@@ -27,7 +30,7 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { leagueId, season, week } = parsed.data;
+  const { leagueId, season, week, tone, useEmojis, trashTalk } = parsed.data;
 
   const supabase = await getSupabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
@@ -49,7 +52,7 @@ export async function POST(req: NextRequest) {
 
   let result;
   try {
-    result = await generateRecap({ leagueId, season, week });
+    result = await generateRecap({ leagueId, season, week, tone, useEmojis, trashTalk });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return Response.json({ error: "recap_failed", message }, { status: 502 });

@@ -7,12 +7,15 @@ import {
 } from "./sleeper";
 import { getPlayersDict } from "./playersCache";
 import { enrichWeek, type EnrichedWeek } from "./enrich";
-import { generateNarrative } from "./narrative";
+import { generateNarrative, type Tone } from "./narrative";
 
 export type RecapInput = {
   leagueId: string;
   season: string;
   week: number;
+  tone?: Tone;
+  useEmojis?: boolean;
+  trashTalk?: boolean;
 };
 
 export type RecapResult = {
@@ -23,10 +26,13 @@ export type RecapResult = {
   markdown: string;
   structured: EnrichedWeek;
   modelId: string;
+  tone: Tone;
+  useEmojis: boolean;
+  trashTalk: boolean;
 };
 
 export async function generateRecap(input: RecapInput): Promise<RecapResult> {
-  const { leagueId, season, week } = input;
+  const { leagueId, season, week, tone, useEmojis, trashTalk } = input;
 
   const [league, users, rosters, matchups, transactions, players] = await Promise.all([
     getLeague(leagueId),
@@ -61,15 +67,18 @@ export async function generateRecap(input: RecapInput): Promise<RecapResult> {
     week,
   });
 
-  const { markdown, modelId } = await generateNarrative(enriched);
+  const narrative = await generateNarrative(enriched, { tone, useEmojis, trashTalk });
 
   return {
     leagueId,
     season,
     week,
     leagueName: league.name,
-    markdown,
+    markdown: narrative.markdown,
     structured: enriched,
-    modelId,
+    modelId: narrative.modelId,
+    tone: narrative.tone,
+    useEmojis: narrative.useEmojis,
+    trashTalk: narrative.trashTalk,
   };
 }
