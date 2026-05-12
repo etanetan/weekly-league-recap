@@ -43,7 +43,7 @@ export async function generateNarrative(data: EnrichedWeek): Promise<NarrativeRe
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
   const ai = new GoogleGenAI({ apiKey });
-  const model = "gemini-1.5-flash";
+  const model = "gemini-2.5-flash";
 
   const userMessage = `Here is the enriched data for the recap. Write the thread.
 
