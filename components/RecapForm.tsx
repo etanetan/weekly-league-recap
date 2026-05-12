@@ -185,7 +185,7 @@ export default function RecapForm({
 }
 
 function RecapDisplay({ result }: { result: RecapResponse }) {
-  const tweets = parseThread(result.markdown);
+  const tweets = parseTweets(result.markdown);
   return (
     <div className="mt-8">
       <div className="mb-4 flex items-baseline justify-between">
@@ -196,32 +196,44 @@ function RecapDisplay({ result }: { result: RecapResponse }) {
           <span className="text-xs text-zinc-500">Saved to your history</span>
         )}
       </div>
-      <ol className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3">
         {tweets.map((t, i) => (
-          <li
+          <article
             key={i}
             className="rounded-lg border border-zinc-200 bg-white px-4 py-3 text-base leading-relaxed text-zinc-900 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-100"
           >
             {t}
-          </li>
+          </article>
         ))}
-      </ol>
+      </div>
     </div>
   );
 }
 
-function parseThread(md: string): string[] {
-  const lines = md.split("\n").map((l) => l.trim()).filter(Boolean);
-  const tweets: string[] = [];
-  let current = "";
-  for (const line of lines) {
-    if (/^\d+\//.test(line)) {
-      if (current) tweets.push(current.trim());
-      current = line;
-    } else if (current) {
-      current += " " + line;
+function parseTweets(md: string): string[] {
+  const trimmed = md.trim();
+
+  // Legacy fallback: if the model returned a numbered thread, parse that format.
+  if (/^\s*\d+\/\s/m.test(trimmed)) {
+    const lines = trimmed.split("\n").map((l) => l.trim()).filter(Boolean);
+    const tweets: string[] = [];
+    let current = "";
+    for (const line of lines) {
+      if (/^\d+\/\s/.test(line)) {
+        if (current) tweets.push(current.trim());
+        current = line.replace(/^\d+\/\s*/, "");
+      } else if (current) {
+        current += " " + line;
+      }
     }
+    if (current) tweets.push(current.trim());
+    return tweets.length > 0 ? tweets : [trimmed];
   }
-  if (current) tweets.push(current.trim());
-  return tweets.length > 0 ? tweets : [md];
+
+  // Preferred: split on blank lines.
+  const chunks = trimmed
+    .split(/\n\s*\n/)
+    .map((c) => c.trim().replace(/\s+\n\s*/g, " "))
+    .filter(Boolean);
+  return chunks.length > 0 ? chunks : [trimmed];
 }
