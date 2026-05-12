@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Weekly League Recap
 
-## Getting Started
+AI-narrated weekly recaps for Sleeper fantasy football leagues. Drop a league ID, pick a week, get a punchy tweet-thread recap (top scores, blowouts, trades, waivers, standings).
 
-First, run the development server:
+## Stack
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- **Next.js 16** (App Router) + TypeScript + Tailwind CSS
+- **Supabase** — Postgres + auth (Google OAuth + email/password)
+- **Google Gemini 2.0 Flash** — generates the recap narrative (free tier)
+- **Upstash Redis** — rate-limits the anonymous trial page
+- Deploys to **Vercel**
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Local setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Install deps:
+   ```sh
+   npm install
+   ```
+2. Create a Supabase project, then in the SQL editor run [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql).
+3. Enable an auth provider in Supabase → Authentication → Providers. Email is on by default; for Google, set up an OAuth client and add `http://localhost:3000/auth/callback` (and your production URL) as a redirect URL.
+4. (Optional) Create an Upstash Redis database for anonymous rate limiting.
+5. Copy `.env.local.example` to `.env.local` and fill in:
+   - `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - `GEMINI_API_KEY` (from https://aistudio.google.com/)
+   - `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` (optional)
+6. Run the dev server:
+   ```sh
+   npm run dev
+   ```
+7. Open http://localhost:3000 and try the trial form with a real Sleeper league ID.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## How it works
 
-## Learn More
+- `lib/sleeper.ts` — thin typed client for the public Sleeper API.
+- `lib/playersCache.ts` — caches the ~5MB players dictionary in memory + `/tmp`.
+- `lib/enrich.ts` — joins matchups + rosters + users + transactions into per-team objects + league-wide notables (top score, blowout, player of the week, trades, waiver winners, standings).
+- `lib/narrative.ts` — sends the enriched data to Gemini 2.0 Flash, returns a numbered tweet thread.
+- `lib/recap.ts` — orchestrator. Public entrypoint.
+- `app/api/recap/route.ts` — anonymous (rate-limited) and authenticated (persisted) recap endpoint.
+- `app/api/leagues/*` — CRUD for saved leagues (auth required).
+- `app/page.tsx` — public trial page.
+- `app/dashboard/page.tsx` + `app/leagues/[leagueId]/page.tsx` — signed-in flow: save leagues, manually run recaps, view history.
 
-To learn more about Next.js, take a look at the following resources:
+## Deploy to Vercel
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+1. Push to GitHub.
+2. Import into Vercel.
+3. Set the same env vars as `.env.local` in the Vercel project settings.
+4. Add your production URL to Supabase auth redirect URLs (e.g. `https://your-app.vercel.app/auth/callback`).
+5. Deploy.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Roadmap
 
-## Deploy on Vercel
+- **v1 (now):** manual-run web app + history.
+- **v2:** Tuesday 8:30am Central cron via Vercel Cron, iterating saved leagues.
+- **v3:** podcast (TTS) and video script output formats.
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Notes
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Sleeper's API does **not** expose league chat or DMs, so recaps can't include trash-talk from the in-app chat. Everything else (scores, trades, waivers, FAAB) is fully public and free.
+- League IDs are per-season on Sleeper — to recap a prior season, use that season's specific league ID, not the current one.
