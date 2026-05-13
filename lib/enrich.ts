@@ -5,9 +5,26 @@ import type {
   Matchup,
   Transaction,
   Player,
+  BracketMatch,
 } from "./sleeper";
 import { rosterFpts, rosterFptsAgainst } from "./sleeper";
 import { playerName } from "./playersCache";
+
+export type PlayoffRoundLabel =
+  | "Wild Card"
+  | "Quarterfinal"
+  | "Semifinal"
+  | "Championship"
+  | "Playoff Round";
+
+export type PlayoffResults = {
+  champion: { rosterId: number; teamName: string } | null;
+  runnerUp: { rosterId: number; teamName: string } | null;
+  thirdPlace: { rosterId: number; teamName: string } | null;
+  championshipScore: { winner: number; loser: number; margin: number } | null;
+  championshipWeek: number | null;
+  isComplete: boolean;
+};
 
 export type TeamSummary = {
   rosterId: number;
@@ -80,6 +97,8 @@ export type EnrichedWeek = {
     week: number;
     totalRosters: number;
     isPlayoffWeek: boolean;
+    playoffRound: PlayoffRoundLabel | null;
+    isChampionshipWeek: boolean;
   };
   teams: WeekTeam[];
   standings: TeamSummary[];
@@ -91,6 +110,8 @@ export type EnrichedWeek = {
 export type RangeWeekDigest = {
   week: number;
   isPlayoffWeek: boolean;
+  playoffRound: PlayoffRoundLabel | null;
+  isChampionshipWeek: boolean;
   notables: WeekNotables;
   results: {
     home: { teamName: string; score: number };
@@ -126,6 +147,7 @@ export type EnrichedRange = {
   standings: TeamSummary[];
   trades: TradeSummary[];
   waivers: WaiverSummary[];
+  playoffResults: PlayoffResults | null;
 };
 
 function teamNameFor(user: LeagueUser | undefined): { team: string; display: string } {
@@ -150,6 +172,105 @@ function pickLabel(p: { season: string; round: number; roster_id: number }): str
   return `${p.season} R${p.round} (originally R${p.roster_id})`;
 }
 
+// Map a playoff round number to a friendly label given the bracket size.
+// Final round is always "Championship"; preceding rounds are derived by
+// counting down (Semifinal, Quarterfinal, Wild Card).
+function labelForRound(round: number, totalRounds: number): PlayoffRoundLabel {
+  const fromEnd = totalRounds - round; // 0 = final, 1 = round before final, etc.
+  if (fromEnd === 0) return "Championship";
+  if (fromEnd === 1) return "Semifinal";
+  if (fromEnd === 2) return "Quarterfinal";
+  if (fromEnd === 3) return "Wild Card";
+  return "Playoff Round";
+}
+
+// Determine which playoff round a given week represents, using the winners
+// bracket as the source of truth for total rounds. Week N maps to round
+// (N - playoff_week_start + 1). Returns null when the week isn't a playoff
+// week or when bracket data is missing.
+export function playoffRoundForWeek(
+  week: number,
+  league: League,
+  winnersBracket: BracketMatch[] | null,
+): { round: number; label: PlayoffRoundLabel; isChampionship: boolean } | null {
+  const start = league.playoff_week_start;
+  if (start == null || week < start) return null;
+  const round = week - start + 1;
+  if (!winnersBracket || winnersBracket.length === 0) {
+    // No bracket — still tell the prompt this is a playoff week.
+    return { round, label: "Playoff Round", isChampionship: false };
+  }
+  const totalRounds = Math.max(...winnersBracket.map((b) => b.r));
+  if (round > totalRounds) return null;
+  const label = labelForRound(round, totalRounds);
+  return { round, label, isChampionship: round === totalRounds };
+}
+
+// Identify champion / runner-up / third place from the bracket data, as long
+// as the championship match has been played (winner field set).
+export function summarizePlayoffs(
+  winnersBracket: BracketMatch[] | null,
+  rosters: Roster[],
+  users: LeagueUser[],
+  league: League,
+): PlayoffResults | null {
+  if (!winnersBracket || winnersBracket.length === 0) return null;
+
+  const usersById = new Map(users.map((u) => [u.user_id, u]));
+  const rostersById = new Map(rosters.map((r) => [r.roster_id, r]));
+  const teamFor = (rosterId: number) => {
+    const r = rostersById.get(rosterId);
+    const u = r?.owner_id ? usersById.get(r.owner_id) : undefined;
+    const { team } = teamNameFor(u);
+    return { rosterId, teamName: team };
+  };
+
+  const totalRounds = Math.max(...winnersBracket.map((b) => b.r));
+  // Championship is the final round's first match (or the only match in the
+  // round). Sleeper sometimes adds a 3rd-place game in the same final round
+  // tagged with `p: 3`; otherwise we look for `m === 1`.
+  const finalRoundMatches = winnersBracket.filter((b) => b.r === totalRounds);
+  const championshipMatch =
+    finalRoundMatches.find((b) => b.p === 1) ??
+    finalRoundMatches.find((b) => b.m === 1) ??
+    finalRoundMatches[0] ??
+    null;
+
+  if (!championshipMatch || championshipMatch.w == null || championshipMatch.l == null) {
+    // Bracket exists but championship isn't decided yet.
+    return {
+      champion: null,
+      runnerUp: null,
+      thirdPlace: null,
+      championshipScore: null,
+      championshipWeek:
+        league.playoff_week_start != null
+          ? league.playoff_week_start + totalRounds - 1
+          : null,
+      isComplete: false,
+    };
+  }
+
+  const thirdPlaceMatch =
+    finalRoundMatches.find((b) => b.p === 3 && b.w != null) ??
+    finalRoundMatches.find(
+      (b) => b !== championshipMatch && b.m === 2 && b.w != null,
+    ) ??
+    null;
+
+  return {
+    champion: teamFor(championshipMatch.w),
+    runnerUp: teamFor(championshipMatch.l),
+    thirdPlace: thirdPlaceMatch?.w != null ? teamFor(thirdPlaceMatch.w) : null,
+    championshipScore: null, // bracket endpoint doesn't expose scores; could enrich via getMatchups if desired
+    championshipWeek:
+      league.playoff_week_start != null
+        ? league.playoff_week_start + totalRounds - 1
+        : null,
+    isComplete: true,
+  };
+}
+
 export function enrichWeek(input: {
   league: League;
   users: LeagueUser[];
@@ -158,8 +279,10 @@ export function enrichWeek(input: {
   transactions: Transaction[];
   players: Record<string, Player>;
   week: number;
+  winnersBracket?: BracketMatch[] | null;
 }): EnrichedWeek {
   const { league, users, rosters, matchups, transactions, players, week } = input;
+  const winnersBracket = input.winnersBracket ?? null;
 
   const usersById = new Map<string, LeagueUser>(users.map((u) => [u.user_id, u]));
   const rostersById = new Map<number, Roster>(rosters.map((r) => [r.roster_id, r]));
@@ -365,6 +488,8 @@ export function enrichWeek(input: {
 
   waivers.sort((a, b) => (b.faabBid ?? 0) - (a.faabBid ?? 0));
 
+  const round = playoffRoundForWeek(week, league, winnersBracket);
+
   return {
     league: {
       name: league.name,
@@ -373,6 +498,8 @@ export function enrichWeek(input: {
       totalRosters: league.total_rosters,
       isPlayoffWeek:
         league.playoff_week_start != null && week >= league.playoff_week_start,
+      playoffRound: round?.label ?? null,
+      isChampionshipWeek: round?.isChampionship ?? false,
     },
     teams,
     standings,
@@ -391,6 +518,7 @@ export function enrichRange(input: {
   waivers: WaiverSummary[];
   fromWeek: number;
   toWeek: number;
+  playoffResults?: PlayoffResults | null;
 }): EnrichedRange {
   const { league, weeks, trades, waivers, fromWeek, toWeek } = input;
 
@@ -415,6 +543,8 @@ export function enrichRange(input: {
     return {
       week: w.league.week,
       isPlayoffWeek: w.league.isPlayoffWeek,
+      playoffRound: w.league.playoffRound,
+      isChampionshipWeek: w.league.isChampionshipWeek,
       notables: w.notables,
       results,
     };
@@ -474,5 +604,6 @@ export function enrichRange(input: {
     standings,
     trades,
     waivers,
+    playoffResults: input.playoffResults ?? null,
   };
 }

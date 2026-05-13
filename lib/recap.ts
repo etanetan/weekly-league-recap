@@ -4,11 +4,14 @@ import {
   getRosters,
   getMatchups,
   getTransactions,
+  getWinnersBracket,
+  type BracketMatch,
 } from "./sleeper";
 import { getPlayersDict } from "./playersCache";
 import {
   enrichWeek,
   enrichRange,
+  summarizePlayoffs,
   type EnrichedWeek,
   type EnrichedRange,
   type TradeSummary,
@@ -45,6 +48,19 @@ export type RecapResult = {
   | { mode: "range"; fromWeek: number; toWeek: number; structured: EnrichedRange }
 );
 
+// The bracket endpoint returns 200 with [] when a league has no bracket yet,
+// so a thrown error usually means the league or network is genuinely broken.
+// We still defang it to null so a temporarily-flaky bracket call can't take
+// down the whole recap.
+async function safeGetBracket(leagueId: string): Promise<BracketMatch[] | null> {
+  try {
+    const data = await getWinnersBracket(leagueId);
+    return Array.isArray(data) ? data : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function generateRecap(input: RecapInput): Promise<RecapResult> {
   const { leagueId, season, tone, useEmojis, trashTalk } = input;
   const isRange = input.mode === "range";
@@ -60,11 +76,12 @@ export async function generateRecap(input: RecapInput): Promise<RecapResult> {
 
     const weekNums = Array.from({ length: toWeek - fromWeek + 1 }, (_, i) => fromWeek + i);
 
-    const [league, users, rosters, players, ...weekData] = await Promise.all([
+    const [league, users, rosters, players, winnersBracket, ...weekData] = await Promise.all([
       getLeague(leagueId),
       getLeagueUsers(leagueId),
       getRosters(leagueId),
       getPlayersDict(),
+      safeGetBracket(leagueId),
       ...weekNums.flatMap((w) => [getMatchups(leagueId, w), getTransactions(leagueId, w)]),
     ]);
 
@@ -89,6 +106,7 @@ export async function generateRecap(input: RecapInput): Promise<RecapResult> {
         transactions,
         players,
         week,
+        winnersBracket,
       });
       enrichedWeeks.push(enriched);
       for (const t of enriched.trades) {
@@ -105,6 +123,15 @@ export async function generateRecap(input: RecapInput): Promise<RecapResult> {
       );
     }
 
+    // Only attach playoff results when the range actually reaches into the
+    // playoff window — avoids the prompt mentioning a championship in a
+    // mid-regular-season catch-up.
+    const playoffStart = league.playoff_week_start ?? null;
+    const rangeTouchesPlayoffs = playoffStart != null && toWeek >= playoffStart;
+    const playoffResults = rangeTouchesPlayoffs
+      ? summarizePlayoffs(winnersBracket, rosters, users, league)
+      : null;
+
     const enriched = enrichRange({
       league,
       weeks: enrichedWeeks,
@@ -112,6 +139,7 @@ export async function generateRecap(input: RecapInput): Promise<RecapResult> {
       waivers: allWaivers,
       fromWeek,
       toWeek,
+      playoffResults,
     });
 
     const narrative = await generateRangeNarrative(enriched, { tone, useEmojis, trashTalk });
@@ -134,13 +162,14 @@ export async function generateRecap(input: RecapInput): Promise<RecapResult> {
 
   const { week } = input;
 
-  const [league, users, rosters, matchups, transactions, players] = await Promise.all([
+  const [league, users, rosters, matchups, transactions, players, winnersBracket] = await Promise.all([
     getLeague(leagueId),
     getLeagueUsers(leagueId),
     getRosters(leagueId),
     getMatchups(leagueId, week),
     getTransactions(leagueId, week),
     getPlayersDict(),
+    safeGetBracket(leagueId),
   ]);
 
   if (!league) {
@@ -165,6 +194,7 @@ export async function generateRecap(input: RecapInput): Promise<RecapResult> {
     transactions: transactions ?? [],
     players,
     week,
+    winnersBracket,
   });
 
   const narrative = await generateNarrative(enriched, { tone, useEmojis, trashTalk });

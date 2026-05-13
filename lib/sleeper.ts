@@ -74,6 +74,22 @@ export type Transaction = {
   leg?: number;
 };
 
+// One row in Sleeper's bracket array. r = round (1, 2, 3...), m = match # in
+// that round (1-indexed). t1/t2 are the two seeded roster_ids; if a match's
+// participants come from a previous round's win/loss, t1_from / t2_from carry
+// the source. w / l are filled in once the match is played.
+export type BracketMatch = {
+  r: number;
+  m: number;
+  t1: number | null;
+  t2: number | null;
+  w: number | null;
+  l: number | null;
+  t1_from?: { w?: number; l?: number };
+  t2_from?: { w?: number; l?: number };
+  p?: number; // place finished (sometimes Sleeper adds this on consolation games)
+};
+
 export type LeagueInfo = {
   leagueId: string;
   name: string;
@@ -131,6 +147,12 @@ export function getTransactions(id: string, week: number) {
 }
 export function getTradedPicks(id: string) {
   return get<DraftPickRef[]>(`/league/${id}/traded_picks`);
+}
+export function getWinnersBracket(id: string) {
+  return get<BracketMatch[]>(`/league/${id}/winners_bracket`);
+}
+export function getLosersBracket(id: string) {
+  return get<BracketMatch[]>(`/league/${id}/losers_bracket`);
 }
 export function getNflState() {
   return get<NflState>(`/state/nfl`);
