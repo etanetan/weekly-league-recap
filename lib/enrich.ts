@@ -59,24 +59,71 @@ export type WaiverSummary = {
   faabBid: number | null;
 };
 
+export type WeekNotables = {
+  topScore: { teamName: string; score: number } | null;
+  lowestScore: { teamName: string; score: number } | null;
+  closestGame:
+    | { home: string; away: string; margin: number; homeScore: number; awayScore: number }
+    | null;
+  biggestBlowout:
+    | { winner: string; loser: string; margin: number; winnerScore: number; loserScore: number }
+    | null;
+  playerOfTheWeek:
+    | { playerId: string; name: string; position: string; points: number; rosteredBy: string }
+    | null;
+};
+
 export type EnrichedWeek = {
   league: {
     name: string;
     season: string;
     week: number;
     totalRosters: number;
+    isPlayoffWeek: boolean;
   };
   teams: WeekTeam[];
   standings: TeamSummary[];
-  notables: {
-    topScore: { teamName: string; score: number } | null;
-    lowestScore: { teamName: string; score: number } | null;
-    closestGame: { home: string; away: string; margin: number; homeScore: number; awayScore: number } | null;
-    biggestBlowout: { winner: string; loser: string; margin: number; winnerScore: number; loserScore: number } | null;
-    playerOfTheWeek:
-      | { playerId: string; name: string; position: string; points: number; rosteredBy: string }
-      | null;
+  notables: WeekNotables;
+  trades: TradeSummary[];
+  waivers: WaiverSummary[];
+};
+
+export type RangeWeekDigest = {
+  week: number;
+  isPlayoffWeek: boolean;
+  notables: WeekNotables;
+  results: {
+    home: { teamName: string; score: number };
+    away: { teamName: string; score: number };
+    margin: number;
+  }[];
+};
+
+export type RangeTeamTotals = {
+  rosterId: number;
+  teamName: string;
+  displayName: string;
+  recordInRange: { wins: number; losses: number; ties: number };
+  totalScore: number;
+  avgScore: number;
+  bestWeek: { week: number; score: number } | null;
+  worstWeek: { week: number; score: number } | null;
+};
+
+export type EnrichedRange = {
+  league: {
+    name: string;
+    season: string;
+    fromWeek: number;
+    toWeek: number;
+    totalRosters: number;
+    seasonType: string;
+    status: string;
+    playoffWeekStart: number | null;
   };
+  weeks: RangeWeekDigest[];
+  teamTotals: RangeTeamTotals[];
+  standings: TeamSummary[];
   trades: TradeSummary[];
   waivers: WaiverSummary[];
 };
@@ -324,10 +371,107 @@ export function enrichWeek(input: {
       season: league.season,
       week,
       totalRosters: league.total_rosters,
+      isPlayoffWeek:
+        league.playoff_week_start != null && week >= league.playoff_week_start,
     },
     teams,
     standings,
     notables: { topScore, lowestScore, closestGame, biggestBlowout, playerOfTheWeek },
+    trades,
+    waivers,
+  };
+}
+
+// Aggregate multiple weekly enrichments into a compact range summary suitable
+// for a "catch-up" or offseason recap covering more than one week.
+export function enrichRange(input: {
+  league: League;
+  weeks: EnrichedWeek[];
+  trades: TradeSummary[];
+  waivers: WaiverSummary[];
+  fromWeek: number;
+  toWeek: number;
+}): EnrichedRange {
+  const { league, weeks, trades, waivers, fromWeek, toWeek } = input;
+
+  const weekDigests: RangeWeekDigest[] = weeks.map((w) => {
+    const seenPair = new Set<number>();
+    const results: RangeWeekDigest["results"] = [];
+    for (const t of w.teams) {
+      if (t.opponentRosterId == null) continue;
+      const pairKey = Math.min(t.rosterId, t.opponentRosterId) * 10_000 + Math.max(t.rosterId, t.opponentRosterId);
+      if (seenPair.has(pairKey)) continue;
+      seenPair.add(pairKey);
+      const opp = w.teams.find((x) => x.rosterId === t.opponentRosterId);
+      if (!opp) continue;
+      const home = t.score >= (opp.score ?? 0) ? t : opp;
+      const away = home === t ? opp : t;
+      results.push({
+        home: { teamName: home.teamName, score: home.score },
+        away: { teamName: away.teamName, score: away.score },
+        margin: Math.abs(home.score - away.score),
+      });
+    }
+    return {
+      week: w.league.week,
+      isPlayoffWeek: w.league.isPlayoffWeek,
+      notables: w.notables,
+      results,
+    };
+  });
+
+  // Per-team aggregate over the range
+  const totalsByRoster = new Map<number, RangeTeamTotals>();
+  for (const w of weeks) {
+    for (const t of w.teams) {
+      let agg = totalsByRoster.get(t.rosterId);
+      if (!agg) {
+        agg = {
+          rosterId: t.rosterId,
+          teamName: t.teamName,
+          displayName: t.displayName,
+          recordInRange: { wins: 0, losses: 0, ties: 0 },
+          totalScore: 0,
+          avgScore: 0,
+          bestWeek: null,
+          worstWeek: null,
+        };
+        totalsByRoster.set(t.rosterId, agg);
+      }
+      agg.totalScore += t.score;
+      if (t.result === "W") agg.recordInRange.wins += 1;
+      else if (t.result === "L") agg.recordInRange.losses += 1;
+      else if (t.result === "T") agg.recordInRange.ties += 1;
+      if (!agg.bestWeek || t.score > agg.bestWeek.score) {
+        agg.bestWeek = { week: w.league.week, score: t.score };
+      }
+      if (!agg.worstWeek || t.score < agg.worstWeek.score) {
+        agg.worstWeek = { week: w.league.week, score: t.score };
+      }
+    }
+  }
+  const teamTotals = Array.from(totalsByRoster.values()).map((t) => ({
+    ...t,
+    avgScore: weeks.length > 0 ? t.totalScore / weeks.length : 0,
+  }));
+
+  // Standings: take the most recent week's standings (final-state snapshot from rosters)
+  const standings = weeks.length > 0 ? weeks[weeks.length - 1].standings : [];
+
+  return {
+    league: {
+      name: league.name,
+      season: league.season,
+      fromWeek,
+      toWeek,
+      totalRosters: league.total_rosters,
+      seasonType: league.season_type,
+      status: league.status,
+      playoffWeekStart: league.playoff_week_start ?? null,
+    },
+    weeks: weekDigests,
+    teamTotals,
+    standings,
     trades,
     waivers,
   };

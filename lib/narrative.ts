@@ -1,5 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
-import type { EnrichedWeek } from "./enrich";
+import type { EnrichedWeek, EnrichedRange } from "./enrich";
 
 export type Tone = "beat-reporter" | "broadcaster" | "hype";
 
@@ -125,6 +125,74 @@ ${JSON.stringify(data, null, 2)}
     contents: userMessage,
     config: {
       systemInstruction: buildSystemPrompt(tone, useEmojis, trashTalk),
+      maxOutputTokens: 4096,
+    },
+  });
+
+  const text = (response.text ?? "").trim();
+  if (!text) {
+    throw new Error("Gemini returned an empty response");
+  }
+
+  return { markdown: text, modelId: model, tone, useEmojis, trashTalk };
+}
+
+const RANGE_BASE_PROMPT = `You are a fantasy football reporter covering one league — a dynasty family/friends league. You report on a multi-week stretch of action as a series of standalone tweets. This is a CATCH-UP / OFFSEASON recap covering MORE THAN ONE WEEK.
+
+OUTPUT FORMAT
+- 6 to 10 standalone tweets, separated by a single blank line.
+- NO numbering, NO "1/" prefixes, NO thread chaining.
+- Each tweet stands on its own, under 280 characters.
+- Return ONLY the tweets. No preamble, no headings, no closing remarks.
+
+CONTENT — PULL ONLY FROM THE JSON DATA, NEVER INVENT
+- Mention the week range explicitly somewhere (e.g. "Weeks 11-14 in review").
+- The hottest team(s) over the stretch — use recordInRange and totalScore from teamTotals.
+- The coldest team(s) over the stretch.
+- The single biggest performance of any week (look at each week's notables.topScore).
+- The single ugliest performance / blowout of any week.
+- The most impactful trade(s) across the range — name the players and picks.
+- Notable waiver moves — biggest FAAB bids, eye-catching adds.
+- Current standings — top 2-3 teams if records are meaningful.
+- If a specific week stood out (a blowout, a comeback, a stat-line), call it out by week number.
+- If isPlayoffWeek is true on any week in the range, treat those weeks as playoff games (higher stakes language).
+- If league.status is "complete" or league.seasonType is "post"/"off", this is a season-end / offseason wrap — frame accordingly (look back at the stretch as the close of a chapter).
+
+If a category has no data, skip it silently. Do not write filler.`;
+
+function buildRangeSystemPrompt(tone: Tone, useEmojis: boolean, trashTalk: boolean): string {
+  const toneSection =
+    tone === "beat-reporter" ? TONE_BEAT_REPORTER : tone === "hype" ? TONE_HYPE : TONE_BROADCASTER;
+  const emojiSection = useEmojis ? EMOJIS_ON : EMOJIS_OFF;
+  const trashTalkSection = trashTalk ? TRASH_TALK_ON : TRASH_TALK_OFF;
+  return [RANGE_BASE_PROMPT, toneSection, emojiSection, trashTalkSection].join("\n\n");
+}
+
+export async function generateRangeNarrative(
+  data: EnrichedRange,
+  options: NarrativeOptions = {},
+): Promise<NarrativeResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
+
+  const tone = options.tone ?? DEFAULT_TONE;
+  const useEmojis = options.useEmojis ?? DEFAULT_USE_EMOJIS;
+  const trashTalk = options.trashTalk ?? DEFAULT_TRASH_TALK;
+
+  const ai = new GoogleGenAI({ apiKey });
+  const model = "gemini-2.5-flash";
+
+  const userMessage = `Here is the enriched data for the multi-week catch-up recap (weeks ${data.league.fromWeek}-${data.league.toWeek}). Write the tweets.
+
+\`\`\`json
+${JSON.stringify(data, null, 2)}
+\`\`\``;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: userMessage,
+    config: {
+      systemInstruction: buildRangeSystemPrompt(tone, useEmojis, trashTalk),
       maxOutputTokens: 4096,
     },
   });

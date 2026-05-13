@@ -1,6 +1,7 @@
 import Link from "next/link";
 import RecapForm from "@/components/RecapForm";
 import { getSupabaseServer } from "@/lib/supabase/server";
+import { getNflState } from "@/lib/sleeper";
 
 export const dynamic = "force-dynamic";
 
@@ -8,17 +9,25 @@ export default async function Home() {
   const supabase = await getSupabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
 
-  const savedLeagues = user
-    ? (await supabase
-        .from("user_leagues")
-        .select("sleeper_league_id, league_name, season")
-        .order("created_at", { ascending: false })
-      ).data?.map((l) => ({
-        sleeperLeagueId: l.sleeper_league_id,
-        leagueName: l.league_name,
-        season: l.season,
-      })) ?? []
-    : [];
+  const [savedLeagues, nflState] = await Promise.all([
+    user
+      ? supabase
+          .from("user_leagues")
+          .select("sleeper_league_id, league_name, season")
+          .order("created_at", { ascending: false })
+          .then((res) =>
+            res.data?.map((l) => ({
+              sleeperLeagueId: l.sleeper_league_id,
+              leagueName: l.league_name,
+              season: l.season,
+            })) ?? [],
+          )
+      : Promise.resolve([]),
+    getNflState().catch(() => null),
+  ]);
+
+  const defaultWeek = nflState?.display_week ?? nflState?.week ?? 1;
+  const defaultSeason = nflState?.season;
 
   return (
     <div className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
@@ -70,7 +79,11 @@ export default async function Home() {
         </section>
 
         <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-          <RecapForm savedLeagues={savedLeagues} />
+          <RecapForm
+            savedLeagues={savedLeagues}
+            defaultWeek={defaultWeek}
+            defaultSeason={defaultSeason}
+          />
         </section>
 
         <section className="text-sm text-zinc-500 dark:text-zinc-400">

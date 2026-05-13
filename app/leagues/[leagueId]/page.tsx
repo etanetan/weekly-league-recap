@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabase/server";
+import { getNflState } from "@/lib/sleeper";
 import RecapForm from "@/components/RecapForm";
 import SignOutButton from "@/components/SignOutButton";
 
@@ -24,12 +25,17 @@ export default async function LeagueDetailPage({
 
   if (!league) notFound();
 
-  const { data: recaps } = await supabase
-    .from("recaps")
-    .select("id, season, week, generated_at, content_markdown")
-    .eq("sleeper_league_id", leagueId)
-    .order("generated_at", { ascending: false })
-    .limit(20);
+  const [recapsRes, nflState] = await Promise.all([
+    supabase
+      .from("recaps")
+      .select("id, season, week, generated_at, content_markdown")
+      .eq("sleeper_league_id", leagueId)
+      .order("generated_at", { ascending: false })
+      .limit(20),
+    getNflState().catch(() => null),
+  ]);
+  const recaps = recapsRes.data;
+  const defaultWeek = nflState?.display_week ?? nflState?.week ?? 1;
 
   return (
     <div className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
@@ -61,7 +67,12 @@ export default async function LeagueDetailPage({
           <h2 className="mb-4 text-lg font-medium text-zinc-900 dark:text-zinc-100">
             Generate a recap
           </h2>
-          <RecapForm defaultLeagueId={leagueId} lockLeagueId defaultSeason={league.season ?? undefined} />
+          <RecapForm
+            defaultLeagueId={leagueId}
+            lockLeagueId
+            defaultSeason={league.season ?? undefined}
+            defaultWeek={defaultWeek}
+          />
         </section>
 
         <section>
