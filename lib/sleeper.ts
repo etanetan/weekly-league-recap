@@ -74,6 +74,16 @@ export type Transaction = {
   leg?: number;
 };
 
+export type LeagueInfo = {
+  leagueId: string;
+  name: string;
+  season: string;
+  seasonType: string;
+  status: string;
+  totalRosters: number;
+  playoffWeekStart: number | null;
+};
+
 export type NflState = {
   week: number;
   season: string;

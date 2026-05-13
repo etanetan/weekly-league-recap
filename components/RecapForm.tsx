@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { LeagueInfo } from "@/lib/sleeper";
 
 export type Tone = "beat-reporter" | "broadcaster" | "hype";
 
@@ -29,7 +30,10 @@ export type RecapResponse = {
   id: string | null;
   leagueName: string;
   season: string;
+  mode: "week" | "range";
   week: number;
+  fromWeek: number | null;
+  toWeek: number | null;
   markdown: string;
   modelId: string;
   persisted: boolean;
@@ -37,7 +41,32 @@ export type RecapResponse = {
 
 const currentYear = new Date().getFullYear();
 const SEASONS = Array.from({ length: currentYear - 2019 }, (_, i) => String(currentYear - i));
-const WEEKS = Array.from({ length: 18 }, (_, i) => i + 1);
+const ALL_WEEKS = Array.from({ length: 18 }, (_, i) => i + 1);
+
+const SEASON_TYPE_LABEL: Record<string, string> = {
+  regular: "Regular season",
+  post: "Postseason",
+  off: "Offseason",
+  pre: "Preseason",
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  in_season: "In season",
+  complete: "Season complete",
+  drafting: "Drafting",
+  pre_draft: "Pre-draft",
+};
+
+function isValidLeagueIdFormat(id: string): boolean {
+  return /^\d{5,64}$/.test(id);
+}
+
+function weekLabel(week: number, playoffStart: number | null): string {
+  if (playoffStart != null && week >= playoffStart) {
+    return `Week ${week} (Playoffs)`;
+  }
+  return `Week ${week}`;
+}
 
 export default function RecapForm({
   defaultLeagueId = "",
@@ -57,6 +86,11 @@ export default function RecapForm({
   const [leagueId, setLeagueId] = useState(initialLeagueId);
   const [season, setSeason] = useState(initialSeason);
   const [week, setWeek] = useState<number>(defaultWeek);
+
+  const [recapMode, setRecapMode] = useState<"week" | "range">("week");
+  const [fromWeek, setFromWeek] = useState<number>(Math.max(1, defaultWeek - 3));
+  const [toWeek, setToWeek] = useState<number>(defaultWeek);
+
   const [tone, setTone] = useState<Tone>("broadcaster");
   const [useEmojis, setUseEmojis] = useState(true);
   const [trashTalk, setTrashTalk] = useState(false);
@@ -64,7 +98,64 @@ export default function RecapForm({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RecapResponse | null>(null);
 
+  type Lookup = {
+    forId: string;
+    status: "ok" | "error";
+    info: LeagueInfo | null;
+    error: string | null;
+  };
+  const [lookup, setLookup] = useState<Lookup | null>(null);
+
+  const trimmedLeagueId = leagueId.trim();
+  const leagueIdIsValid = isValidLeagueIdFormat(trimmedLeagueId);
+  const lookupForCurrent =
+    lookup && lookup.forId === trimmedLeagueId ? lookup : null;
+
   const showDropdown = hasSaved && !manualMode;
+
+  // Fetch league info (debounced) whenever the ID is valid.
+  // setState calls are inside a deferred async callback (not the effect body)
+  // so they do not trigger cascading-render warnings.
+  useEffect(() => {
+    if (!leagueIdIsValid) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/sleeper/league/${trimmedLeagueId}`, {
+          signal: controller.signal,
+        });
+        const data = (await res.json()) as
+          | LeagueInfo
+          | { error: string; message?: string };
+        if (!res.ok) {
+          setLookup({
+            forId: trimmedLeagueId,
+            status: "error",
+            info: null,
+            error:
+              "message" in data && data.message ? data.message : "League not found.",
+          });
+        } else {
+          const info = data as LeagueInfo;
+          setLookup({ forId: trimmedLeagueId, status: "ok", info, error: null });
+          // Sleeper league IDs are per-season; sync the season field.
+          if (info.season) setSeason(info.season);
+        }
+      } catch (err) {
+        if ((err as { name?: string }).name === "AbortError") return;
+        setLookup({
+          forId: trimmedLeagueId,
+          status: "error",
+          info: null,
+          error: "Could not reach Sleeper.",
+        });
+      }
+    }, 350);
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+    };
+  }, [leagueIdIsValid, trimmedLeagueId]);
 
   function handleDropdownChange(newLeagueId: string) {
     setLeagueId(newLeagueId);
@@ -78,10 +169,14 @@ export default function RecapForm({
     setResult(null);
     setSubmitting(true);
     try {
+      const body =
+        recapMode === "week"
+          ? { leagueId: leagueId.trim(), season, week, tone, useEmojis, trashTalk }
+          : { leagueId: leagueId.trim(), season, fromWeek, toWeek, tone, useEmojis, trashTalk };
       const res = await fetch("/api/recap", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ leagueId: leagueId.trim(), season, week, tone, useEmojis, trashTalk }),
+        body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -96,6 +191,8 @@ export default function RecapForm({
       setSubmitting(false);
     }
   }
+
+  const playoffStart = lookupForCurrent?.info?.playoffWeekStart ?? null;
 
   return (
     <div className="w-full">
@@ -143,37 +240,130 @@ export default function RecapForm({
               className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none disabled:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:disabled:bg-zinc-800"
             />
           )}
+
+          <LeagueInfoLine
+            haveLeagueId={leagueIdIsValid}
+            lookup={lookupForCurrent}
+          />
         </label>
 
-        <div className="grid grid-cols-2 gap-4">
-          <label className="flex flex-col gap-1">
-            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Season</span>
-            <select
-              value={season}
-              onChange={(e) => setSeason(e.target.value)}
+        <div className="flex items-center justify-between">
+          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Recap type</span>
+          <div className="inline-flex rounded-md border border-zinc-300 bg-white p-0.5 text-sm dark:border-zinc-700 dark:bg-zinc-900">
+            <button
+              type="button"
+              onClick={() => setRecapMode("week")}
               disabled={submitting}
-              className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              className={`rounded px-3 py-1 ${
+                recapMode === "week"
+                  ? "bg-emerald-600 text-white"
+                  : "text-zinc-700 dark:text-zinc-300"
+              }`}
             >
-              {SEASONS.map((y) => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-          </label>
-
-          <label className="flex flex-col gap-1">
-            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Week</span>
-            <select
-              value={week}
-              onChange={(e) => setWeek(Number(e.target.value))}
+              Single week
+            </button>
+            <button
+              type="button"
+              onClick={() => setRecapMode("range")}
               disabled={submitting}
-              className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              className={`rounded px-3 py-1 ${
+                recapMode === "range"
+                  ? "bg-emerald-600 text-white"
+                  : "text-zinc-700 dark:text-zinc-300"
+              }`}
             >
-              {WEEKS.map((w) => (
-                <option key={w} value={w}>Week {w}</option>
-              ))}
-            </select>
-          </label>
+              Catch-up (range)
+            </button>
+          </div>
         </div>
+
+        {recapMode === "week" ? (
+          <div className="grid grid-cols-2 gap-4">
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Season</span>
+              <select
+                value={season}
+                onChange={(e) => setSeason(e.target.value)}
+                disabled={submitting}
+                className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              >
+                {SEASONS.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Week</span>
+              <select
+                value={week}
+                onChange={(e) => setWeek(Number(e.target.value))}
+                disabled={submitting}
+                className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              >
+                {ALL_WEEKS.map((w) => (
+                  <option key={w} value={w}>
+                    {weekLabel(w, playoffStart)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-4">
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Season</span>
+              <select
+                value={season}
+                onChange={(e) => setSeason(e.target.value)}
+                disabled={submitting}
+                className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              >
+                {SEASONS.map((y) => (
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">From week</span>
+              <select
+                value={fromWeek}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setFromWeek(v);
+                  if (v > toWeek) setToWeek(v);
+                }}
+                disabled={submitting}
+                className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              >
+                {ALL_WEEKS.map((w) => (
+                  <option key={w} value={w}>
+                    {weekLabel(w, playoffStart)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">To week</span>
+              <select
+                value={toWeek}
+                onChange={(e) => {
+                  const v = Number(e.target.value);
+                  setToWeek(v);
+                  if (v < fromWeek) setFromWeek(v);
+                }}
+                disabled={submitting}
+                className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              >
+                {ALL_WEEKS.map((w) => (
+                  <option key={w} value={w}>
+                    {weekLabel(w, playoffStart)}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        )}
 
         <label className="flex flex-col gap-1">
           <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Recap tone</span>
@@ -239,17 +429,81 @@ export default function RecapForm({
   );
 }
 
+function LeagueInfoLine({
+  haveLeagueId,
+  lookup,
+}: {
+  haveLeagueId: boolean;
+  lookup:
+    | { status: "ok" | "error"; info: LeagueInfo | null; error: string | null }
+    | null;
+}) {
+  if (!haveLeagueId) {
+    return <span className="mt-1 text-xs text-zinc-400">Enter a numeric Sleeper league ID.</span>;
+  }
+  if (!lookup) {
+    return <span className="mt-1 text-xs text-zinc-500">Looking up league…</span>;
+  }
+  if (lookup.status === "error") {
+    return (
+      <span className="mt-1 text-xs text-red-600 dark:text-red-400">
+        {lookup.error ?? "League not found."}
+      </span>
+    );
+  }
+  const info = lookup.info;
+  if (!info) return null;
+  const seasonType = SEASON_TYPE_LABEL[info.seasonType] ?? info.seasonType;
+  const status = STATUS_LABEL[info.status] ?? info.status;
+  return (
+    <span className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
+      <span className="font-medium text-zinc-800 dark:text-zinc-200">{info.name}</span>
+      {" • "}
+      {info.season} {seasonType}
+      {" • "}
+      {info.totalRosters} teams
+      {" • "}
+      {status}
+      {info.playoffWeekStart != null && ` • playoffs start Wk ${info.playoffWeekStart}`}
+    </span>
+  );
+}
+
 function RecapDisplay({ result }: { result: RecapResponse }) {
   const tweets = parseTweets(result.markdown);
+  const [copied, setCopied] = useState(false);
+
+  async function copyAll() {
+    try {
+      await navigator.clipboard.writeText(tweets.join("\n\n"));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // ignore
+    }
+  }
+
+  const heading =
+    result.mode === "range" && result.fromWeek != null && result.toWeek != null
+      ? `${result.leagueName} — ${result.season} Weeks ${result.fromWeek}-${result.toWeek}`
+      : `${result.leagueName} — ${result.season} Week ${result.week}`;
+
   return (
     <div className="mt-8">
-      <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
-          {result.leagueName} — {result.season} Week {result.week}
-        </h2>
-        {result.persisted && (
-          <span className="text-xs text-zinc-500">Saved to your history</span>
-        )}
+      <div className="mb-4 flex items-baseline justify-between gap-3">
+        <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">{heading}</h2>
+        <div className="flex items-center gap-3">
+          {result.persisted && (
+            <span className="text-xs text-zinc-500">Saved to your history</span>
+          )}
+          <button
+            type="button"
+            onClick={copyAll}
+            className="rounded-md border border-zinc-300 px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            {copied ? "Copied!" : "Copy all"}
+          </button>
+        </div>
       </div>
       <div className="flex flex-col gap-3">
         {tweets.map((t, i) => (
