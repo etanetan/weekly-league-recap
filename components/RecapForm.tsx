@@ -94,6 +94,8 @@ export default function RecapForm({
   const [tone, setTone] = useState<Tone>("broadcaster");
   const [useEmojis, setUseEmojis] = useState(true);
   const [trashTalk, setTrashTalk] = useState(false);
+  const [format, setFormat] = useState<"text" | "audio" | "video">("text");
+  const [customInstructions, setCustomInstructions] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RecapResponse | null>(null);
@@ -169,10 +171,20 @@ export default function RecapForm({
     setResult(null);
     setSubmitting(true);
     try {
+      const trimmedInstructions = customInstructions.trim().slice(0, 600);
+      const shared = {
+        leagueId: leagueId.trim(),
+        season,
+        tone,
+        useEmojis,
+        trashTalk,
+        format,
+        ...(trimmedInstructions ? { customInstructions: trimmedInstructions } : {}),
+      };
       const body =
         recapMode === "week"
-          ? { leagueId: leagueId.trim(), season, week, tone, useEmojis, trashTalk }
-          : { leagueId: leagueId.trim(), season, fromWeek, toWeek, tone, useEmojis, trashTalk };
+          ? { ...shared, week }
+          : { ...shared, fromWeek, toWeek };
       const res = await fetch("/api/recap", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -379,6 +391,44 @@ export default function RecapForm({
               </option>
             ))}
           </select>
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            Output format
+          </span>
+          <select
+            value={format}
+            onChange={(e) => setFormat(e.target.value as typeof format)}
+            disabled={submitting}
+            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+          >
+            <option value="text">Text — tweet thread</option>
+            <option value="audio" disabled>Audio — coming soon</option>
+            <option value="video" disabled>Video — coming soon</option>
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <div className="flex items-baseline justify-between">
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Custom instructions <span className="text-zinc-400 font-normal">(optional)</span>
+            </span>
+            <span className="text-xs text-zinc-400">
+              {customInstructions.length}/600
+            </span>
+          </div>
+          <textarea
+            value={customInstructions}
+            onChange={(e) => setCustomInstructions(e.target.value.slice(0, 600))}
+            placeholder='e.g. "Focus on the rivalry between Team A and Team B" or "Roast my friend Greg for benching his QB"'
+            disabled={submitting}
+            rows={3}
+            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-500 focus:outline-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+          />
+          <span className="text-xs text-zinc-500">
+            Extra guidance for this recap. The base rules (tweet format, fact-grounding) always apply.
+          </span>
         </label>
 
         <div className="flex flex-wrap gap-x-6 gap-y-2">

@@ -29,6 +29,7 @@ export type RecapInput = {
   tone?: Tone;
   useEmojis?: boolean;
   trashTalk?: boolean;
+  customInstructions?: string;
 } & (
   | { mode?: "week"; week: number }
   | { mode: "range"; fromWeek: number; toWeek: number }
@@ -62,7 +63,7 @@ async function safeGetBracket(leagueId: string): Promise<BracketMatch[] | null> 
 }
 
 export async function generateRecap(input: RecapInput): Promise<RecapResult> {
-  const { leagueId, season, tone, useEmojis, trashTalk } = input;
+  const { leagueId, season, tone, useEmojis, trashTalk, customInstructions } = input;
   const isRange = input.mode === "range";
 
   if (isRange) {
@@ -142,7 +143,12 @@ export async function generateRecap(input: RecapInput): Promise<RecapResult> {
       playoffResults,
     });
 
-    const narrative = await generateRangeNarrative(enriched, { tone, useEmojis, trashTalk });
+    const narrative = await generateRangeNarrative(enriched, {
+      tone,
+      useEmojis,
+      trashTalk,
+      customInstructions,
+    });
 
     return {
       mode: "range",
@@ -197,7 +203,12 @@ export async function generateRecap(input: RecapInput): Promise<RecapResult> {
     winnersBracket,
   });
 
-  const narrative = await generateNarrative(enriched, { tone, useEmojis, trashTalk });
+  const narrative = await generateNarrative(enriched, {
+    tone,
+    useEmojis,
+    trashTalk,
+    customInstructions,
+  });
 
   return {
     mode: "week",

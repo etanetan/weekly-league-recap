@@ -17,6 +17,11 @@ const BodySchema = z
     tone: z.enum(["beat-reporter", "broadcaster", "hype"]).optional(),
     useEmojis: z.boolean().optional(),
     trashTalk: z.boolean().optional(),
+    customInstructions: z.string().max(600).optional(),
+    // Format dropdown: audio/video are accepted to keep the API forward-
+    // compatible with the planned features, but we reject them for now with
+    // a clear "not yet implemented" message.
+    format: z.enum(["text", "audio", "video"]).optional(),
   })
   .refine(
     (b) => (b.week != null) !== (b.fromWeek != null && b.toWeek != null),
@@ -41,7 +46,28 @@ export async function POST(req: NextRequest) {
       { status: 400 },
     );
   }
-  const { leagueId, season, week, fromWeek, toWeek, tone, useEmojis, trashTalk } = parsed.data;
+  const {
+    leagueId,
+    season,
+    week,
+    fromWeek,
+    toWeek,
+    tone,
+    useEmojis,
+    trashTalk,
+    customInstructions,
+    format,
+  } = parsed.data;
+
+  if (format && format !== "text") {
+    return Response.json(
+      {
+        error: "format_not_implemented",
+        message: `${format === "audio" ? "Audio" : "Video"} recaps are coming soon. Please select Text for now.`,
+      },
+      { status: 501 },
+    );
+  }
 
   const supabase = await getSupabaseServer();
   const { data: { user } } = await supabase.auth.getUser();
@@ -65,7 +91,16 @@ export async function POST(req: NextRequest) {
   try {
     result =
       week != null
-        ? await generateRecap({ mode: "week", leagueId, season, week, tone, useEmojis, trashTalk })
+        ? await generateRecap({
+            mode: "week",
+            leagueId,
+            season,
+            week,
+            tone,
+            useEmojis,
+            trashTalk,
+            customInstructions,
+          })
         : await generateRecap({
             mode: "range",
             leagueId,
@@ -75,6 +110,7 @@ export async function POST(req: NextRequest) {
             tone,
             useEmojis,
             trashTalk,
+            customInstructions,
           });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
