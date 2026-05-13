@@ -21,6 +21,12 @@ OUTPUT FORMAT
 - Each tweet stands on its own, under 280 characters.
 - Return ONLY the tweets. No preamble, no headings, no closing remarks.
 
+PLAYOFF CONTEXT
+- If league.isPlayoffWeek is true, frame this as a playoff game with elevated stakes. Mention the round by name when league.playoffRound is set ("Wild Card weekend", "Quarterfinal", "Semifinal", or "Championship").
+- If league.isChampionshipWeek is true, lead with the championship framing. The winning team is the league champion — say so explicitly. The losing team is the runner-up.
+- For playoff weeks, scores and margins matter more — call out who advanced and who got eliminated.
+- Outside of playoff weeks (regular season), do not use playoff language at all.
+
 CONTENT — PULL ONLY FROM THE JSON DATA, NEVER INVENT
 - Highest team score of the week
 - Lowest team score of the week
@@ -145,18 +151,22 @@ OUTPUT FORMAT
 - Each tweet stands on its own, under 280 characters.
 - Return ONLY the tweets. No preamble, no headings, no closing remarks.
 
+CHAMPIONSHIP / PLAYOFFS — FOLLOW THESE RULES BEFORE ANYTHING ELSE
+- If playoffResults.isComplete is true and playoffResults.champion is non-null, the league season is OVER. The champion WON THE LEAGUE — DO NOT phrase it as "had a great record" or "led the standings". Say "wins the chip", "takes the title", "champion", "raised the trophy" (or tone-appropriate equivalents). Lead the recap with this.
+- Also call out playoffResults.runnerUp explicitly. If playoffResults.thirdPlace is set, mention it.
+- For weeks in the digest with isChampionshipWeek=true, that week's matchup IS the championship game; describe it as such.
+- For weeks with isPlayoffWeek=true and a playoffRound set, name the round ("Quarterfinal", "Semifinal", etc.).
+- If playoffResults is null or incomplete, the playoffs aren't decided — DO NOT claim a champion.
+
 CONTENT — PULL ONLY FROM THE JSON DATA, NEVER INVENT
-- Mention the week range explicitly somewhere (e.g. "Weeks 11-14 in review").
-- The hottest team(s) over the stretch — use recordInRange and totalScore from teamTotals.
-- The coldest team(s) over the stretch.
+- Mention the week range explicitly somewhere (e.g. "Weeks 11-14 in review"). For a season wrap, "{Season} season" framing is fine.
 - The single biggest performance of any week (look at each week's notables.topScore).
 - The single ugliest performance / blowout of any week.
 - The most impactful trade(s) across the range — name the players and picks.
 - Notable waiver moves — biggest FAAB bids, eye-catching adds.
-- Current standings — top 2-3 teams if records are meaningful.
+- The hottest / coldest team(s) over the stretch — use recordInRange and totalScore from teamTotals. Use this language for REGULAR-SEASON catch-ups; for a season wrap (playoff results present), records over the range are secondary to the title outcome.
 - If a specific week stood out (a blowout, a comeback, a stat-line), call it out by week number.
-- If isPlayoffWeek is true on any week in the range, treat those weeks as playoff games (higher stakes language).
-- If league.status is "complete" or league.seasonType is "post"/"off", this is a season-end / offseason wrap — frame accordingly (look back at the stretch as the close of a chapter).
+- If league.status is "complete" or league.seasonType is "post"/"off", this is a season-end / offseason wrap — frame accordingly.
 
 If a category has no data, skip it silently. Do not write filler.`;
 
