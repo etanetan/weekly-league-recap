@@ -62,10 +62,18 @@ function isValidLeagueIdFormat(id: string): boolean {
 }
 
 function weekLabel(week: number, playoffStart: number | null): string {
+  // Abbreviated "Wk" keeps the option text readable inside narrow 3-column
+  // mobile dropdowns. The playoff suffix is short on purpose.
   if (playoffStart != null && week >= playoffStart) {
-    return `Week ${week} (Playoffs)`;
+    return `Wk ${week} · Playoffs`;
   }
-  return `Week ${week}`;
+  return `Wk ${week}`;
+}
+
+function clampWeek(w: number): number {
+  if (!Number.isFinite(w) || w < 1) return 1;
+  if (w > 18) return 18;
+  return Math.floor(w);
 }
 
 export default function RecapForm({
@@ -82,14 +90,19 @@ export default function RecapForm({
     defaultSeason ||
     (hasSaved ? savedLeagues[0].season ?? SEASONS[1] ?? SEASONS[0] : SEASONS[1] ?? SEASONS[0]);
 
+  // Clamp the incoming default to [1, 18]; an out-of-range value (e.g.
+  // offseason week=0 from Sleeper) would otherwise leave the dropdown
+  // showing nothing because no <option> matches.
+  const initialWeek = clampWeek(defaultWeek);
+
   const [manualMode, setManualMode] = useState(false);
   const [leagueId, setLeagueId] = useState(initialLeagueId);
   const [season, setSeason] = useState(initialSeason);
-  const [week, setWeek] = useState<number>(defaultWeek);
+  const [week, setWeek] = useState<number>(initialWeek);
 
   const [recapMode, setRecapMode] = useState<"week" | "range">("week");
-  const [fromWeek, setFromWeek] = useState<number>(Math.max(1, defaultWeek - 3));
-  const [toWeek, setToWeek] = useState<number>(defaultWeek);
+  const [fromWeek, setFromWeek] = useState<number>(clampWeek(initialWeek - 3));
+  const [toWeek, setToWeek] = useState<number>(initialWeek);
 
   const [tone, setTone] = useState<Tone>("broadcaster");
   const [useEmojis, setUseEmojis] = useState(true);
@@ -374,6 +387,16 @@ export default function RecapForm({
                 ))}
               </select>
             </label>
+            <p className="col-span-3 -mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              Will recap{" "}
+              <span className="font-medium text-zinc-700 dark:text-zinc-300">
+                {fromWeek === toWeek
+                  ? `Wk ${fromWeek}`
+                  : `Wks ${fromWeek}–${toWeek}`}
+              </span>
+              {playoffStart != null && toWeek >= playoffStart && " (includes playoffs)"}
+              .
+            </p>
           </div>
         )}
 
