@@ -26,7 +26,9 @@ export default async function Home() {
     getNflState().catch(() => null),
   ]);
 
-  const defaultWeek = nflState?.display_week ?? nflState?.week ?? 1;
+  // Use || not ??: in the deep offseason Sleeper returns week=0, which is
+  // nullish-truthy but not a valid week number for the form's 1-18 selector.
+  const defaultWeek = nflState?.display_week || nflState?.week || 1;
   const defaultSeason = nflState?.season;
 
   return (
