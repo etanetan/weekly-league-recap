@@ -145,19 +145,17 @@ ${JSON.stringify(data, null, 2)}
 const AUDIO_SCRIPT_PROMPT = `You are writing a spoken fantasy football recap for one league — a friends-and-family league. The text you write will be read aloud by a text-to-speech voice, so it must sound natural spoken, NOT read like tweets.
 
 OUTPUT FORMAT
-- One flowing piece of narration, 115-130 words. It MUST stay under 60 seconds when spoken aloud — when in doubt, cut a sentence rather than run long.
+- One short, flowing piece of narration: 80-100 words, and never more than 110. This is a quick audio hit — succinct beats comprehensive.
+- It must sound complete: finish every sentence and end on a clean sign-off line. Never trail off mid-thought.
 - Plain spoken sentences only. NO tweet formatting, NO numbering, NO bullet points, NO emoji, NO hashtags, NO headings.
 - Spell things out for the ear: say "forty-two points", not "42 pts".
-- Open with a one-line hook, then move through the week, then end on a clean sign-off line.
 - Return ONLY the narration text. No preamble, no stage directions, no quotation marks.
 
 CONTENT — PULL ONLY FROM THE JSON DATA, NEVER INVENT
-- The highest team score and the lowest team score of the week.
-- The biggest blowout and the closest game, with margins.
-- The top individual starter — player, points, the manager who started them.
-- The most impactful trade, if any — name the players/picks.
-- A quick standings note if records are meaningful.
-If a category has no data, skip it silently — never say "no trades this week."`;
+- Open with a one-line hook, hit the three or four biggest stories of the week, then sign off.
+- Prioritize: the highest score, the biggest blowout or the closest game, the top individual starter, and the most impactful trade if there was one.
+- Because this is short, do NOT try to cover everything — pick the best stories and tell them well.
+- If a category has no data, skip it silently — never say "no trades this week."`;
 
 function buildAudioSystemPrompt(tone: Tone, trashTalk: boolean): string {
   const toneSection =
@@ -172,6 +170,19 @@ export type AudioScriptResult = {
   tone: Tone;
   trashTalk: boolean;
 };
+
+// Hard ceiling on the spoken script. The TTS engine truncates very long input
+// (cutting the audio off mid-sentence), so if the model overshoots we trim
+// back to the last complete sentence rather than ship a clipped recap.
+const MAX_AUDIO_SCRIPT_CHARS = 850;
+
+function capAudioScript(script: string): string {
+  const trimmed = script.trim();
+  if (trimmed.length <= MAX_AUDIO_SCRIPT_CHARS) return trimmed;
+  const slice = trimmed.slice(0, MAX_AUDIO_SCRIPT_CHARS);
+  const lastSentence = slice.match(/^[\s\S]*[.!?](?=\s|$)/);
+  return (lastSentence ? lastSentence[0] : slice).trim();
+}
 
 export async function generateAudioScript(
   data: EnrichedWeek,
@@ -201,7 +212,7 @@ ${JSON.stringify(data, null, 2)}
     },
   });
 
-  const script = (response.text ?? "").trim();
+  const script = capAudioScript(response.text ?? "");
   if (!script) {
     throw new Error("Gemini returned an empty audio script");
   }

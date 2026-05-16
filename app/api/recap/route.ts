@@ -23,6 +23,29 @@ const BodySchema = z.object({
 type Supabase = Awaited<ReturnType<typeof getSupabaseServer>>;
 type User = NonNullable<Awaited<ReturnType<Supabase["auth"]["getUser"]>>["data"]["user"]>;
 
+/**
+ * Map a recap-generation failure to an HTTP response. A Gemini quota error
+ * (free tier is only a few requests/minute) becomes a friendly 429 instead of
+ * a raw 502 so the form can tell the user to retry shortly.
+ */
+function recapErrorResponse(err: unknown): Response {
+  const message = err instanceof Error ? err.message : String(err);
+  const status = (err as { status?: number })?.status;
+  const quotaHit =
+    status === 429 || /RESOURCE_EXHAUSTED|quota|rate limit/i.test(message);
+  if (quotaHit) {
+    return Response.json(
+      {
+        error: "ai_busy",
+        message:
+          "Recaps are at capacity right now (AI free-tier limit). Please try again in a minute.",
+      },
+      { status: 429 },
+    );
+  }
+  return Response.json({ error: "recap_failed", message }, { status: 502 });
+}
+
 export async function POST(req: NextRequest) {
   let body: unknown;
   try {
@@ -83,8 +106,7 @@ async function handleTextRecap(args: {
   try {
     result = await generateRecap({ leagueId, season, week, tone, useEmojis, trashTalk });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: "recap_failed", message }, { status: 502 });
+    return recapErrorResponse(err);
   }
 
   let savedId: string | null = null;
@@ -141,8 +163,7 @@ async function handleAudioRecap(args: {
   try {
     recap = await generateAudioRecap({ leagueId, season, week, tone, trashTalk, voice });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return Response.json({ error: "recap_failed", message }, { status: 502 });
+    return recapErrorResponse(err);
   }
 
   const headers = new Headers({

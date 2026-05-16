@@ -95,12 +95,29 @@ export default function RecapForm({
   // Track the current audio object URL so we can revoke it on the next run.
   const audioUrlRef = useRef<string | null>(null);
 
+  // Pre-recorded voice sample, for the Preview button.
+  const previewRef = useRef<HTMLAudioElement | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+
   const showDropdown = hasSaved && !manualMode;
 
   function handleDropdownChange(newLeagueId: string) {
     setLeagueId(newLeagueId);
     const match = savedLeagues.find((l) => l.sleeperLeagueId === newLeagueId);
     if (match?.season) setSeason(match.season);
+  }
+
+  function previewVoice() {
+    if (typeof Audio === "undefined") return;
+    if (!previewRef.current) previewRef.current = new Audio();
+    const el = previewRef.current;
+    el.pause();
+    el.src = `/voice-samples/${voice}.wav`;
+    el.currentTime = 0;
+    el.onended = () => setPreviewing(false);
+    el.onerror = () => setPreviewing(false);
+    setPreviewing(true);
+    el.play().catch(() => setPreviewing(false));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -274,21 +291,31 @@ export default function RecapForm({
         </label>
 
         {format === "audio" && (
-          <label className="flex flex-col gap-1">
+          <div className="flex flex-col gap-1">
             <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Voice</span>
-            <select
-              value={voice}
-              onChange={(e) => setVoice(e.target.value)}
-              disabled={submitting}
-              className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-            >
-              {VOICE_OPTIONS.map((v) => (
-                <option key={v.value} value={v.value}>
-                  {v.label} — {v.description}
-                </option>
-              ))}
-            </select>
-          </label>
+            <div className="flex gap-2">
+              <select
+                value={voice}
+                onChange={(e) => setVoice(e.target.value)}
+                disabled={submitting}
+                className="flex-1 rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+              >
+                {VOICE_OPTIONS.map((v) => (
+                  <option key={v.value} value={v.value}>
+                    {v.label} — {v.description}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={previewVoice}
+                className="shrink-0 rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+              >
+                {previewing ? "Playing…" : "▶ Preview"}
+              </button>
+            </div>
+            <span className="text-xs text-zinc-500">Hear a sample before you generate.</span>
+          </div>
         )}
 
         <div className="flex flex-wrap gap-x-6 gap-y-2">
