@@ -1,6 +1,6 @@
 # Weekly League Recap
 
-AI-narrated weekly recaps for Sleeper fantasy football leagues. Drop a league ID, pick a week, get a punchy tweet-thread recap (top scores, blowouts, trades, waivers, standings).
+AI-narrated weekly recaps for Sleeper fantasy football leagues. Drop a league ID, pick a week, get a punchy recap (top scores, blowouts, trades, waivers, standings) as either a tweet thread or a ~1-minute audio clip you can play, download, and share.
 
 ## Stack
 
@@ -16,7 +16,7 @@ AI-narrated weekly recaps for Sleeper fantasy football leagues. Drop a league ID
    ```sh
    npm install
    ```
-2. Create a Supabase project, then in the SQL editor run [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql).
+2. Create a Supabase project, then in the SQL editor run [`supabase/migrations/0001_init.sql`](supabase/migrations/0001_init.sql) followed by [`supabase/migrations/0002_audio.sql`](supabase/migrations/0002_audio.sql) (the latter adds audio-recap columns and the private `recap-audio` storage bucket).
 3. Enable an auth provider in Supabase → Authentication → Providers. Email is on by default; for Google, set up an OAuth client and add `http://localhost:3000/auth/callback` (and your production URL) as a redirect URL.
 4. (Optional) Create an Upstash Redis database for anonymous rate limiting.
 5. Copy `.env.local.example` to `.env.local` and fill in:
@@ -34,7 +34,8 @@ AI-narrated weekly recaps for Sleeper fantasy football leagues. Drop a league ID
 - `lib/sleeper.ts` — thin typed client for the public Sleeper API.
 - `lib/playersCache.ts` — caches the ~5MB players dictionary in memory + `/tmp`.
 - `lib/enrich.ts` — joins matchups + rosters + users + transactions into per-team objects + league-wide notables (top score, blowout, player of the week, trades, waiver winners, standings).
-- `lib/narrative.ts` — sends the enriched data to Gemini 2.0 Flash, returns a numbered tweet thread.
+- `lib/narrative.ts` — sends the enriched data to Gemini, returns either a tweet thread (text) or a flowing ~55s spoken script (audio).
+- `lib/tts.ts` — turns the spoken script into a `.wav` via Gemini TTS; voice selectable in the form.
 - `lib/recap.ts` — orchestrator. Public entrypoint.
 - `app/api/recap/route.ts` — anonymous (rate-limited) and authenticated (persisted) recap endpoint.
 - `app/api/leagues/*` — CRUD for saved leagues (auth required).

@@ -13,7 +13,7 @@ export const DEFAULT_TONE: Tone = "broadcaster";
 export const DEFAULT_USE_EMOJIS = true;
 export const DEFAULT_TRASH_TALK = false;
 
-const BASE_PROMPT = `You are a fantasy football reporter covering one league — a dynasty family/friends league. You report each week's developments as a series of standalone tweets.
+const BASE_PROMPT = `You are a fantasy football reporter covering one league — a friends-and-family league. You report each week's developments as a series of standalone tweets.
 
 OUTPUT FORMAT
 - 6 to 10 standalone tweets, separated by a single blank line.
@@ -135,4 +135,76 @@ ${JSON.stringify(data, null, 2)}
   }
 
   return { markdown: text, modelId: model, tone, useEmojis, trashTalk };
+}
+
+// ---------------------------------------------------------------------------
+// Audio recap script — a flowing spoken narration (not tweets) sized for a
+// ~55-second clip. Fed to the TTS engine in lib/tts.ts.
+// ---------------------------------------------------------------------------
+
+const AUDIO_SCRIPT_PROMPT = `You are writing a spoken fantasy football recap for one league — a friends-and-family league. The text you write will be read aloud by a text-to-speech voice, so it must sound natural spoken, NOT read like tweets.
+
+OUTPUT FORMAT
+- One flowing piece of narration, 115-130 words. It MUST stay under 60 seconds when spoken aloud — when in doubt, cut a sentence rather than run long.
+- Plain spoken sentences only. NO tweet formatting, NO numbering, NO bullet points, NO emoji, NO hashtags, NO headings.
+- Spell things out for the ear: say "forty-two points", not "42 pts".
+- Open with a one-line hook, then move through the week, then end on a clean sign-off line.
+- Return ONLY the narration text. No preamble, no stage directions, no quotation marks.
+
+CONTENT — PULL ONLY FROM THE JSON DATA, NEVER INVENT
+- The highest team score and the lowest team score of the week.
+- The biggest blowout and the closest game, with margins.
+- The top individual starter — player, points, the manager who started them.
+- The most impactful trade, if any — name the players/picks.
+- A quick standings note if records are meaningful.
+If a category has no data, skip it silently — never say "no trades this week."`;
+
+function buildAudioSystemPrompt(tone: Tone, trashTalk: boolean): string {
+  const toneSection =
+    tone === "beat-reporter" ? TONE_BEAT_REPORTER : tone === "hype" ? TONE_HYPE : TONE_BROADCASTER;
+  const trashTalkSection = trashTalk ? TRASH_TALK_ON : TRASH_TALK_OFF;
+  return [AUDIO_SCRIPT_PROMPT, toneSection, trashTalkSection].join("\n\n");
+}
+
+export type AudioScriptResult = {
+  script: string;
+  modelId: string;
+  tone: Tone;
+  trashTalk: boolean;
+};
+
+export async function generateAudioScript(
+  data: EnrichedWeek,
+  options: NarrativeOptions = {},
+): Promise<AudioScriptResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
+
+  const tone = options.tone ?? DEFAULT_TONE;
+  const trashTalk = options.trashTalk ?? DEFAULT_TRASH_TALK;
+
+  const ai = new GoogleGenAI({ apiKey });
+  const model = "gemini-2.5-flash";
+
+  const userMessage = `Here is the enriched data for the recap. Write the spoken narration.
+
+\`\`\`json
+${JSON.stringify(data, null, 2)}
+\`\`\``;
+
+  const response = await ai.models.generateContent({
+    model,
+    contents: userMessage,
+    config: {
+      systemInstruction: buildAudioSystemPrompt(tone, trashTalk),
+      maxOutputTokens: 2048,
+    },
+  });
+
+  const script = (response.text ?? "").trim();
+  if (!script) {
+    throw new Error("Gemini returned an empty audio script");
+  }
+
+  return { script, modelId: model, tone, trashTalk };
 }

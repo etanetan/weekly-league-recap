@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export type Tone = "beat-reporter" | "broadcaster" | "hype";
 
@@ -8,6 +8,16 @@ const TONE_OPTIONS: { value: Tone; label: string; description: string }[] = [
   { value: "broadcaster", label: "Broadcaster", description: "Animated TV anchor energy" },
   { value: "beat-reporter", label: "Beat reporter", description: "Schefter-style news flashes" },
   { value: "hype", label: "Hype", description: "Sports Twitter, full volume" },
+];
+
+// Mirrors VOICE_OPTIONS in lib/tts.ts (value/label only — the server maps the
+// value to a Gemini voice and validates it).
+const VOICE_OPTIONS: { value: string; label: string; description: string }[] = [
+  { value: "announcer", label: "Announcer", description: "Deep, broadcast-booth delivery" },
+  { value: "energetic", label: "Energetic", description: "Upbeat, lively pace" },
+  { value: "confident", label: "Confident", description: "Firm, anchor-desk steady" },
+  { value: "smooth", label: "Smooth", description: "Easy, breezy podcast tone" },
+  { value: "hype", label: "Hype", description: "Bold, big-game excitement" },
 ];
 
 export type SavedLeague = {
@@ -25,7 +35,8 @@ type Props = {
   onResult?: (result: RecapResponse) => void;
 };
 
-export type RecapResponse = {
+export type TextRecapResponse = {
+  format: "text";
   id: string | null;
   leagueName: string;
   season: string;
@@ -34,6 +45,21 @@ export type RecapResponse = {
   modelId: string;
   persisted: boolean;
 };
+
+export type AudioRecapResponse = {
+  format: "audio";
+  leagueName: string;
+  season: string;
+  week: number;
+  voice: string;
+  audioUrl: string;
+  shareUrl: string | null;
+  persisted: boolean;
+};
+
+export type RecapResponse = TextRecapResponse | AudioRecapResponse;
+
+type OutputFormat = "text" | "audio";
 
 const currentYear = new Date().getFullYear();
 const SEASONS = Array.from({ length: currentYear - 2019 }, (_, i) => String(currentYear - i));
@@ -57,12 +83,17 @@ export default function RecapForm({
   const [leagueId, setLeagueId] = useState(initialLeagueId);
   const [season, setSeason] = useState(initialSeason);
   const [week, setWeek] = useState<number>(defaultWeek);
+  const [format, setFormat] = useState<OutputFormat>("text");
   const [tone, setTone] = useState<Tone>("broadcaster");
+  const [voice, setVoice] = useState<string>("announcer");
   const [useEmojis, setUseEmojis] = useState(true);
   const [trashTalk, setTrashTalk] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<RecapResponse | null>(null);
+
+  // Track the current audio object URL so we can revoke it on the next run.
+  const audioUrlRef = useRef<string | null>(null);
 
   const showDropdown = hasSaved && !manualMode;
 
@@ -77,12 +108,41 @@ export default function RecapForm({
     setError(null);
     setResult(null);
     setSubmitting(true);
+
+    if (audioUrlRef.current) {
+      URL.revokeObjectURL(audioUrlRef.current);
+      audioUrlRef.current = null;
+    }
+
     try {
       const res = await fetch("/api/recap", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ leagueId: leagueId.trim(), season, week, tone, useEmojis, trashTalk }),
+        body: JSON.stringify({ leagueId: leagueId.trim(), season, week, format, tone, useEmojis, trashTalk, voice }),
       });
+
+      const contentType = res.headers.get("content-type") ?? "";
+
+      // Audio recaps come back as a raw WAV body with metadata in headers.
+      if (res.ok && contentType.includes("audio/")) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        audioUrlRef.current = url;
+        const audioResult: AudioRecapResponse = {
+          format: "audio",
+          leagueName: decodeURIComponent(res.headers.get("x-recap-league") ?? ""),
+          season: res.headers.get("x-recap-season") ?? season,
+          week: Number(res.headers.get("x-recap-week") ?? week),
+          voice: res.headers.get("x-recap-voice") ?? voice,
+          audioUrl: url,
+          shareUrl: res.headers.get("x-recap-share-url"),
+          persisted: res.headers.get("x-recap-persisted") === "true",
+        };
+        setResult(audioResult);
+        onResult?.(audioResult);
+        return;
+      }
+
       const data = await res.json();
       if (!res.ok) {
         setError(data.message ?? data.error ?? "Something went wrong.");
@@ -175,6 +235,28 @@ export default function RecapForm({
           </label>
         </div>
 
+        <div className="flex flex-col gap-1">
+          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Output</span>
+          <div className="flex rounded-md border border-zinc-300 p-0.5 dark:border-zinc-700">
+            {(["text", "audio"] as const).map((f) => (
+              <button
+                key={f}
+                type="button"
+                onClick={() => setFormat(f)}
+                disabled={submitting}
+                aria-pressed={format === f}
+                className={`flex-1 rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+                  format === f
+                    ? "bg-emerald-600 text-white"
+                    : "text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
+                }`}
+              >
+                {f === "text" ? "Tweet thread" : "Audio recap"}
+              </button>
+            ))}
+          </div>
+        </div>
+
         <label className="flex flex-col gap-1">
           <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Recap tone</span>
           <select
@@ -191,19 +273,39 @@ export default function RecapForm({
           </select>
         </label>
 
-        <div className="flex flex-wrap gap-x-6 gap-y-2">
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={useEmojis}
-              onChange={(e) => setUseEmojis(e.target.checked)}
+        {format === "audio" && (
+          <label className="flex flex-col gap-1">
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Voice</span>
+            <select
+              value={voice}
+              onChange={(e) => setVoice(e.target.value)}
               disabled={submitting}
-              className="h-4 w-4 accent-emerald-600"
-            />
-            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Include emojis
-            </span>
+              className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-base text-zinc-900 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+            >
+              {VOICE_OPTIONS.map((v) => (
+                <option key={v.value} value={v.value}>
+                  {v.label} — {v.description}
+                </option>
+              ))}
+            </select>
           </label>
+        )}
+
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          {format === "text" && (
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={useEmojis}
+                onChange={(e) => setUseEmojis(e.target.checked)}
+                disabled={submitting}
+                className="h-4 w-4 accent-emerald-600"
+              />
+              <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+                Include emojis
+              </span>
+            </label>
+          )}
 
           <label className="flex items-center gap-2">
             <input
@@ -224,7 +326,13 @@ export default function RecapForm({
           disabled={submitting || !leagueId.trim()}
           className="rounded-md bg-emerald-600 px-4 py-2.5 text-base font-medium text-white transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-zinc-400"
         >
-          {submitting ? "Generating recap…" : "Generate recap"}
+          {submitting
+            ? format === "audio"
+              ? "Generating audio…"
+              : "Generating recap…"
+            : format === "audio"
+              ? "Generate audio recap"
+              : "Generate recap"}
         </button>
 
         {error && (
@@ -234,12 +342,13 @@ export default function RecapForm({
         )}
       </form>
 
-      {result && <RecapDisplay result={result} />}
+      {result && result.format === "text" && <RecapDisplay result={result} />}
+      {result && result.format === "audio" && <AudioRecapDisplay result={result} />}
     </div>
   );
 }
 
-function RecapDisplay({ result }: { result: RecapResponse }) {
+function RecapDisplay({ result }: { result: TextRecapResponse }) {
   const tweets = parseTweets(result.markdown);
   return (
     <div className="mt-8">
@@ -260,6 +369,75 @@ function RecapDisplay({ result }: { result: RecapResponse }) {
             {t}
           </article>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function safeFileName(name: string): string {
+  return name.replace(/[^a-z0-9]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase() || "recap";
+}
+
+function AudioRecapDisplay({ result }: { result: AudioRecapResponse }) {
+  const [shareNote, setShareNote] = useState<string | null>(null);
+  const fileName = `${safeFileName(result.leagueName)}-${result.season}-wk${result.week}.wav`;
+
+  async function handleShare() {
+    if (!result.shareUrl) return;
+    const shareData = {
+      title: `${result.leagueName} — ${result.season} Week ${result.week} recap`,
+      url: result.shareUrl,
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+        return;
+      }
+      await navigator.clipboard.writeText(result.shareUrl);
+      setShareNote("Link copied to clipboard");
+      setTimeout(() => setShareNote(null), 3000);
+    } catch {
+      // user dismissed the share sheet — nothing to do
+    }
+  }
+
+  return (
+    <div className="mt-8">
+      <div className="mb-4 flex items-baseline justify-between">
+        <h2 className="text-xl font-semibold text-zinc-900 dark:text-zinc-100">
+          {result.leagueName} — {result.season} Week {result.week}
+        </h2>
+        {result.persisted && (
+          <span className="text-xs text-zinc-500">Saved to your history</span>
+        )}
+      </div>
+
+      <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <audio controls src={result.audioUrl} className="w-full" />
+
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <a
+            href={result.audioUrl}
+            download={fileName}
+            className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+          >
+            Download
+          </a>
+
+          {result.shareUrl ? (
+            <button
+              type="button"
+              onClick={handleShare}
+              className="rounded-md border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Share
+            </button>
+          ) : (
+            <span className="text-xs text-zinc-500">Sign in to save and share recaps.</span>
+          )}
+
+          {shareNote && <span className="text-xs text-emerald-700 dark:text-emerald-400">{shareNote}</span>}
+        </div>
       </div>
     </div>
   );

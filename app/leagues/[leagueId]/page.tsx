@@ -26,10 +26,24 @@ export default async function LeagueDetailPage({
 
   const { data: recaps } = await supabase
     .from("recaps")
-    .select("id, season, week, generated_at, content_markdown")
+    .select("id, season, week, generated_at, content_markdown, format, audio_path")
     .eq("sleeper_league_id", leagueId)
     .order("generated_at", { ascending: false })
     .limit(20);
+
+  // Audio lives in a private bucket — mint short-lived signed URLs for playback.
+  const audioPaths = (recaps ?? [])
+    .map((r) => r.audio_path)
+    .filter((p): p is string => !!p);
+  const audioUrls = new Map<string, string>();
+  if (audioPaths.length > 0) {
+    const { data: signed } = await supabase.storage
+      .from("recap-audio")
+      .createSignedUrls(audioPaths, 60 * 60 * 24 * 7);
+    for (const s of signed ?? []) {
+      if (s.path && s.signedUrl) audioUrls.set(s.path, s.signedUrl);
+    }
+  }
 
   return (
     <div className="flex flex-1 flex-col bg-zinc-50 dark:bg-black">
@@ -76,14 +90,24 @@ export default async function LeagueDetailPage({
                   <div className="flex items-baseline justify-between">
                     <div className="text-base font-medium text-zinc-900 dark:text-zinc-100">
                       {r.season} Week {r.week}
+                      {r.format === "audio" && (
+                        <span className="ml-2 rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-medium text-emerald-700 dark:bg-emerald-950 dark:text-emerald-400">
+                          Audio
+                        </span>
+                      )}
                     </div>
                     <div className="text-xs text-zinc-500">
                       {new Date(r.generated_at).toLocaleString()}
                     </div>
                   </div>
+
+                  {r.format === "audio" && r.audio_path && audioUrls.has(r.audio_path) && (
+                    <audio controls src={audioUrls.get(r.audio_path)} className="mt-2 w-full" />
+                  )}
+
                   <details className="mt-2">
                     <summary className="cursor-pointer text-sm text-emerald-700 hover:underline dark:text-emerald-400">
-                      View recap
+                      {r.format === "audio" ? "View transcript" : "View recap"}
                     </summary>
                     <pre className="mt-3 whitespace-pre-wrap text-sm text-zinc-800 dark:text-zinc-200">
                       {r.content_markdown}
