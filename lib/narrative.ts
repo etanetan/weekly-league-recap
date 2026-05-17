@@ -145,17 +145,23 @@ ${JSON.stringify(data, null, 2)}
 const AUDIO_SCRIPT_PROMPT = `You are writing a spoken fantasy football recap for one league — a friends-and-family league. The text you write will be read aloud by a text-to-speech voice, so it must sound natural spoken, NOT read like tweets.
 
 OUTPUT FORMAT
-- One short, flowing piece of narration: 80-100 words, and never more than 110. This is a quick audio hit — succinct beats comprehensive.
+- One flowing piece of narration, 270-330 words. This is the FULL recap — as complete and detailed as a written week-in-review, not a teaser or a highlight blurb.
 - It must sound complete: finish every sentence and end on a clean sign-off line. Never trail off mid-thought.
-- Plain spoken sentences only. NO tweet formatting, NO numbering, NO bullet points, NO emoji, NO hashtags, NO headings.
+- Plain spoken sentences in natural paragraphs. NO tweet formatting, NO numbering, NO bullet points, NO emoji, NO hashtags, NO headings.
 - Spell things out for the ear: say "forty-two points", not "42 pts".
 - Return ONLY the narration text. No preamble, no stage directions, no quotation marks.
 
 CONTENT — PULL ONLY FROM THE JSON DATA, NEVER INVENT
-- Open with a one-line hook, hit the three or four biggest stories of the week, then sign off.
-- Prioritize: the highest score, the biggest blowout or the closest game, the top individual starter, and the most impactful trade if there was one.
-- Because this is short, do NOT try to cover everything — pick the best stories and tell them well.
-- If a category has no data, skip it silently — never say "no trades this week."`;
+- Open with a one-line hook for the week.
+- Cover every storyline below that has data, and give each one a real sentence or two — enough detail to be satisfying, not a passing mention:
+  - the highest team score and the lowest team score
+  - the closest matchup and the biggest blowout, with margins
+  - the top individual starter — player, points, the manager who started them
+  - the standout trade(s) — name the players and the picks
+  - notable waiver moves — meaningful FAAB bids or eye-catching adds
+  - a standings note if records are meaningful
+- Close with a clean sign-off.
+- If a category genuinely has no data, skip it silently — never say "no trades this week." Never pad with invented detail; only real storylines from the data.`;
 
 function buildAudioSystemPrompt(tone: Tone, trashTalk: boolean): string {
   const toneSection =
@@ -171,10 +177,11 @@ export type AudioScriptResult = {
   trashTalk: boolean;
 };
 
-// Hard ceiling on the spoken script. The TTS engine truncates very long input
-// (cutting the audio off mid-sentence), so if the model overshoots we trim
-// back to the last complete sentence rather than ship a clipped recap.
-const MAX_AUDIO_SCRIPT_CHARS = 850;
+// Safety backstop on the spoken script. The TTS engine truncates very long
+// input (cutting the audio off mid-sentence); a full ~320-word recap is well
+// under this, so if the model badly overshoots we trim back to the last
+// complete sentence rather than ship a clipped recap.
+const MAX_AUDIO_SCRIPT_CHARS = 2400;
 
 function capAudioScript(script: string): string {
   const trimmed = script.trim();
@@ -183,6 +190,14 @@ function capAudioScript(script: string): string {
   const lastSentence = slice.match(/^[\s\S]*[.!?](?=\s|$)/);
   return (lastSentence ? lastSentence[0] : slice).trim();
 }
+
+function wordCount(s: string): number {
+  return s.split(/\s+/).filter(Boolean).length;
+}
+
+// A full recap covers six-plus storylines; anything well short of this is a
+// bad generation (Gemini occasionally under-produces), so we retry once.
+const MIN_AUDIO_SCRIPT_WORDS = 140;
 
 export async function generateAudioScript(
   data: EnrichedWeek,
@@ -203,16 +218,23 @@ export async function generateAudioScript(
 ${JSON.stringify(data, null, 2)}
 \`\`\``;
 
-  const response = await ai.models.generateContent({
-    model,
-    contents: userMessage,
-    config: {
-      systemInstruction: buildAudioSystemPrompt(tone, trashTalk),
-      maxOutputTokens: 2048,
-    },
-  });
+  let script = "";
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const response = await ai.models.generateContent({
+      model,
+      contents: userMessage,
+      config: {
+        systemInstruction: buildAudioSystemPrompt(tone, trashTalk),
+        maxOutputTokens: 2048,
+      },
+    });
+    script = capAudioScript(response.text ?? "");
+    if (wordCount(script) >= MIN_AUDIO_SCRIPT_WORDS) break;
+    if (attempt === 1) {
+      console.warn(`Audio script came back short (${wordCount(script)} words) — retrying once.`);
+    }
+  }
 
-  const script = capAudioScript(response.text ?? "");
   if (!script) {
     throw new Error("Gemini returned an empty audio script");
   }

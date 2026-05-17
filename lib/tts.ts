@@ -75,13 +75,18 @@ export type SynthesisResult = {
   mimeType: "audio/wav";
 };
 
+/** True for transient Gemini errors (model overloaded) that are worth a retry. */
+function isTransient(err: unknown): boolean {
+  const status = (err as { status?: number })?.status;
+  return status === 503 || /UNAVAILABLE|high demand|overloaded/i.test(String(err));
+}
+
 export async function synthesizeSpeech(text: string, voice: string): Promise<SynthesisResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is not set");
 
   const ai = new GoogleGenAI({ apiKey });
-
-  const response = await ai.models.generateContent({
+  const params = {
     model: "gemini-2.5-flash-preview-tts",
     contents: text,
     config: {
@@ -92,7 +97,23 @@ export async function synthesizeSpeech(text: string, voice: string): Promise<Syn
         },
       },
     },
-  });
+  };
+
+  // The TTS preview model is frequently "overloaded" — retry transient 503s
+  // with a short backoff before giving up.
+  let response;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      response = await ai.models.generateContent(params);
+      break;
+    } catch (err) {
+      if (isTransient(err) && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
 
   const inline = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
   if (!inline?.data) {

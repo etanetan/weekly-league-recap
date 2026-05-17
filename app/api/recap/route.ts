@@ -24,21 +24,22 @@ type Supabase = Awaited<ReturnType<typeof getSupabaseServer>>;
 type User = NonNullable<Awaited<ReturnType<Supabase["auth"]["getUser"]>>["data"]["user"]>;
 
 /**
- * Map a recap-generation failure to an HTTP response. A Gemini quota error
- * (free tier is only a few requests/minute) becomes a friendly 429 instead of
- * a raw 502 so the form can tell the user to retry shortly.
+ * Map a recap-generation failure to an HTTP response. Gemini quota errors
+ * (free-tier rate limit) and transient "model overloaded" errors become a
+ * friendly 429 instead of a raw 502 so the form can tell the user to retry.
  */
 function recapErrorResponse(err: unknown): Response {
   const message = err instanceof Error ? err.message : String(err);
   const status = (err as { status?: number })?.status;
-  const quotaHit =
-    status === 429 || /RESOURCE_EXHAUSTED|quota|rate limit/i.test(message);
-  if (quotaHit) {
+  const busy =
+    status === 429 ||
+    status === 503 ||
+    /RESOURCE_EXHAUSTED|UNAVAILABLE|quota|rate limit|high demand|overloaded/i.test(message);
+  if (busy) {
     return Response.json(
       {
         error: "ai_busy",
-        message:
-          "Recaps are at capacity right now (AI free-tier limit). Please try again in a minute.",
+        message: "Recaps are busy right now. Please try again in a minute.",
       },
       { status: 429 },
     );
